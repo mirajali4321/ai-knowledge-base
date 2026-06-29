@@ -41,6 +41,17 @@ app.use(
   }),
 );
 
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20, // only 20 attempts per 15 min on auth endpoints
+  message: {
+    success: false,
+    message: "Too many auth attempts, please try again later",
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ── Body parsers ──────────────────────────────────────────────────
 app.use(express.json({ limit: "10kb" }));
 app.use(express.urlencoded({ extended: true, limit: "10kb" }));
@@ -57,7 +68,7 @@ app.get("/", (req, res) => {
 });
 
 // ── Routes ────────────────────────────────────────────────────────
-app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/auth", authLimiter, authRoutes);
 
 // ── Swagger documentation ─────────────────────────────────────────
 app.use(
