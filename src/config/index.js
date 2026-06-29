@@ -13,6 +13,12 @@ const config = {
     accessExpiry: process.env.ACCESS_TOKEN_EXPIRY || "15m",
     refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || "7d",
   },
+  aws: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    region: process.env.AWS_REGION,
+    s3Bucket: process.env.AWS_S3_BUCKET,
+  },
 };
 
 const requiredKeys = [

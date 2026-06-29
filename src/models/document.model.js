@@ -46,6 +46,10 @@ const documentSchema = new mongoose.Schema(
       type: Number, // file size in bytes
       required: true,
     },
+    s3Key: {
+      type: String,
+      required: true, // S3 file path — needed to generate download URLs and delete
+    },
     status: {
       type: String,
       enum: ["uploaded", "processing", "ready", "failed"],
