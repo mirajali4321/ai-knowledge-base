@@ -41,6 +41,7 @@ userSchema.pre("save", async function () {
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
+userSchema.index({ createdAt: -1 });
 
 const User = mongoose.model("User", userSchema);
 

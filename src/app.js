@@ -30,7 +30,11 @@ app.use(
     max: 100,
     message: {
       success: false,
-      message: "Too many requests, please try again later",
+      error: {
+        message: "Too many requests, please try again later",
+        code: "RATE_LIMIT_EXCEEDED",
+        statusCode: 429,
+      },
     },
     standardHeaders: true,
     legacyHeaders: false,
@@ -56,7 +60,11 @@ app.get("/", (req, res) => {
 app.use("/api/v1/auth", authRoutes);
 
 // ── Swagger documentation ─────────────────────────────────────────
-app.use("/api-docs", swaggerUi.serveFiles(swaggerSpec, {}), swaggerUi.setup(swaggerSpec));
+app.use(
+  "/api-docs",
+  swaggerUi.serveFiles(swaggerSpec, {}),
+  swaggerUi.setup(swaggerSpec),
+);
 
 // ── Global error handler (always last) ───────────────────────────
 app.use(errorMiddleware);
