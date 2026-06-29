@@ -5,9 +5,12 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const config = require("./config");
 const errorMiddleware = require("./middlewares/error.middleware");
-const authRoutes = require("./routes/auth.route");
+//swagger
 const swaggerUi = require("swagger-ui-express");
 const swaggerSpec = require("./config/swagger");
+//routes
+const authRoutes = require("./routes/auth.route");
+const documentRoutes = require("./routes/document.route");
 
 const app = express();
 
@@ -69,6 +72,7 @@ app.get("/", (req, res) => {
 
 // ── Routes ────────────────────────────────────────────────────────
 app.use("/api/v1/auth", authLimiter, authRoutes);
+app.use("/api/v1/documents", documentRoutes);
 
 // ── Swagger documentation ─────────────────────────────────────────
 app.use(
