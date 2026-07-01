@@ -11,6 +11,7 @@ const swaggerSpec = require("./config/swagger");
 //routes
 const authRoutes = require("./routes/auth.route");
 const documentRoutes = require("./routes/document.route");
+const chatRoutes = require("./routes/chat.route");
 
 const app = express();
 
@@ -73,6 +74,7 @@ app.get("/", (req, res) => {
 // ── Routes ────────────────────────────────────────────────────────
 app.use("/api/v1/auth", authLimiter, authRoutes);
 app.use("/api/v1/documents", documentRoutes);
+app.use("/api/v1/chat", chatRoutes);
 
 // ── Swagger documentation ─────────────────────────────────────────
 app.use(
