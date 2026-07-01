@@ -150,4 +150,31 @@ router.get("/:id", documentController.getDocument);
  */
 router.delete("/:id", documentController.deleteDocument);
 
+/**
+ * @swagger
+ * /documents/{id}/process:
+ *   post:
+ *     summary: Extract text and chunk document
+ *     tags: [Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Document ID
+ *     responses:
+ *       200:
+ *         description: Document processed successfully
+ *       400:
+ *         description: Document not in processing state
+ *       404:
+ *         description: Document not found
+ *       500:
+ *         description: Processing failed
+ */
+router.post("/:id/process", documentController.processDocument);
+
 module.exports = router;

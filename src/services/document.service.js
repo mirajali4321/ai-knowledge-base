@@ -1,6 +1,7 @@
 const Document = require("../models/document.model");
 const s3Service = require("./s3.service");
 const ApiError = require("../utils/ApiError");
+const fileProcessorService = require("./fileProcessor.service");
 
 // ── Get presigned upload URL + create document record ─────────────
 const initiateUpload = async ({ filename, mimeType, size, userId }) => {
@@ -117,10 +118,61 @@ const deleteDocument = async ({ documentId, userId }) => {
   await Document.findByIdAndDelete(documentId);
 };
 
+// ── Process document — extract text and chunk ─────────────────────
+const processDocument = async ({ documentId, userId }) => {
+  const document = await Document.findOne({
+    _id: documentId,
+    owner: userId,
+  });
+
+  if (!document) {
+    throw new ApiError(404, "Document not found");
+  }
+
+  if (document.status !== "processing") {
+    throw new ApiError(
+      400,
+      `Document is in '${document.status}' state. Only 'processing' documents can be processed`,
+    );
+  }
+
+  try {
+    // update status to show processing started
+    document.status = "processing";
+    await document.save();
+
+    // run the full pipeline
+    const { chunks, totalChunks } = await fileProcessorService.processFile({
+      s3Key: document.s3Key,
+      mimeType: document.mimeType,
+    });
+
+    // save chunks to document
+    document.chunks = chunks;
+    document.chunkCount = totalChunks;
+    document.status = "ready";
+    document.errorMessage = null;
+    await document.save();
+
+    return {
+      documentId: document._id,
+      chunkCount: totalChunks,
+      status: document.status,
+    };
+  } catch (error) {
+    // if anything fails update status to failed
+    document.status = "failed";
+    document.errorMessage = error.message;
+    await document.save();
+    throw new ApiError(500, `Document processing failed: ${error.message}`);
+  }
+};
+
 module.exports = {
   initiateUpload,
   confirmUpload,
   getUserDocuments,
   getDocument,
   deleteDocument,
+  processDocument,
 };

@@ -76,10 +76,23 @@ const deleteDocument = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, {}, "Document deleted successfully"));
 });
 
+// ── Process document ──────────────────────────────────────────────
+const processDocument = asyncHandler(async (req, res) => {
+  const result = await documentService.processDocument({
+    documentId: req.params.id,
+    userId: req.user._id,
+  });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, result, "Document processed successfully"));
+});
+
 module.exports = {
   initiateUpload,
   confirmUpload,
   getUserDocuments,
   getDocument,
   deleteDocument,
+  processDocument,
 };
