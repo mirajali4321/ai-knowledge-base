@@ -19,12 +19,17 @@ const config = {
     region: process.env.AWS_REGION,
     s3Bucket: process.env.AWS_S3_BUCKET,
   },
+  groq: {
+    apiKey: process.env.GROQ_API_KEY,
+    model: "llama3-8b-8192",
+  },
 };
 
 const requiredKeys = [
   ["db.uri", config.db.uri],
   ["jwt.accessSecret", config.jwt.accessSecret],
   ["jwt.refreshSecret", config.jwt.refreshSecret],
+  ["groq.apiKey", config.groq.apiKey],
 ];
 
 requiredKeys.forEach(([key, value]) => {
