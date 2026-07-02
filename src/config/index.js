@@ -23,6 +23,10 @@ const config = {
     apiKey: process.env.GROQ_API_KEY,
     model: "llama-3.3-70b-versatile",
   },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY,
+    embeddingModel: "gemini-embedding-001",
+  },
 };
 
 const requiredKeys = [
@@ -30,6 +34,7 @@ const requiredKeys = [
   ["jwt.accessSecret", config.jwt.accessSecret],
   ["jwt.refreshSecret", config.jwt.refreshSecret],
   ["groq.apiKey", config.groq.apiKey],
+  ["gemini.apiKey", config.gemini.apiKey],
 ];
 
 requiredKeys.forEach(([key, value]) => {

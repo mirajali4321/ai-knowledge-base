@@ -2,6 +2,7 @@ const Document = require("../models/document.model");
 const s3Service = require("./s3.service");
 const ApiError = require("../utils/ApiError");
 const fileProcessorService = require("./fileProcessor.service");
+const embeddingService = require("./embedding.service");
 
 // ── Get presigned upload URL + create document record ─────────────
 const initiateUpload = async ({ filename, mimeType, size, userId }) => {
@@ -146,9 +147,12 @@ const processDocument = async ({ documentId, userId }) => {
       s3Key: document.s3Key,
       mimeType: document.mimeType,
     });
+    // step 2 — generate embeddings for all chunks
+    const embeddedChunks =
+      await embeddingService.generateChunkEmbeddings(chunks);
 
     // save chunks to document
-    document.chunks = chunks;
+    document.chunks = embeddedChunks;
     document.chunkCount = totalChunks;
     document.status = "ready";
     document.errorMessage = null;
