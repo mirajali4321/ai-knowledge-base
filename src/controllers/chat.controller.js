@@ -10,4 +10,18 @@ const chat = asyncHandler(async (req, res) => {
   res.status(200).json(new ApiResponse(200, result, "Chat response generated"));
 });
 
-module.exports = { chat };
+const query = asyncHandler(async (req, res) => {
+  const { question, documentId } = req.body;
+
+  const result = await chatService.queryDocument({
+    question,
+    documentId,
+    userId: req.user._id,
+  });
+
+  res
+    .status(200)
+    .json(new ApiResponse(200, result, "Query answered successfully"));
+});
+
+module.exports = { chat, query };

@@ -10,7 +10,7 @@ const config = {
   jwt: {
     accessSecret: process.env.ACCESS_TOKEN_SECRET,
     refreshSecret: process.env.REFRESH_TOKEN_SECRET,
-    accessExpiry: process.env.ACCESS_TOKEN_EXPIRY || "15m",
+    accessExpiry: process.env.ACCESS_TOKEN_EXPIRY || "1d",
     refreshExpiry: process.env.REFRESH_TOKEN_EXPIRY || "7d",
   },
   aws: {
@@ -26,6 +26,11 @@ const config = {
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,
     embeddingModel: "gemini-embedding-001",
+  },
+  vectorSearch: {
+    indexName: "knowledge_base_index",
+    numCandidates: 100,
+    limit: 5,
   },
 };
 
