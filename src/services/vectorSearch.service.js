@@ -36,5 +36,33 @@ const searchSimilarChunks = async ({ query, documentId, userId }) => {
 
   return results;
 };
+const searchAllUserDocuments = async ({ query, userId }) => {
+  const queryEmbedding = await embeddingService.generateEmbedding(query);
+  const ownerId = new mongoose.Types.ObjectId(userId);
 
-module.exports = { searchSimilarChunks };
+  const results = await Document.aggregate([
+    {
+      $vectorSearch: {
+        index: config.vectorSearch.indexName,
+        path: "chunks.embedding",
+        queryVector: queryEmbedding,
+        numCandidates: config.vectorSearch.numCandidates,
+        limit: config.vectorSearch.limit,
+        filter: {
+          owner: { $eq: ownerId },
+        },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        text: "$chunks.text",
+        score: { $meta: "vectorSearchScore" },
+      },
+    },
+  ]);
+
+  return results;
+};
+
+module.exports = { searchSimilarChunks, searchAllUserDocuments };

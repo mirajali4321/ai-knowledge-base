@@ -1,11 +1,8 @@
-const geminiClient = require("../config/gemini");
-const config = require("../config");
+const { getEmbeddingModel } = require("../config/gemini");
 
 // ── Generate embedding for a single text ──────────────────────────
 const generateEmbedding = async (text) => {
-  const model = geminiClient.getGenerativeModel({
-    model: config.gemini.embeddingModel,
-  });
+  const model = getEmbeddingModel();
 
   const result = await model.embedContent(text);
   return result.embedding.values; // array of numbers
@@ -13,9 +10,7 @@ const generateEmbedding = async (text) => {
 
 // ── Generate embeddings for multiple chunks ───────────────────────
 const generateChunkEmbeddings = async (chunks) => {
-  const model = geminiClient.getGenerativeModel({
-    model: config.gemini.embeddingModel,
-  });
+  const model = getEmbeddingModel();
 
   const requests = chunks.map((chunk) => ({
     content: { parts: [{ text: chunk.text }] },

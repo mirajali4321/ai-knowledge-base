@@ -3,4 +3,9 @@ const config = require("./index");
 
 const geminiClient = new GoogleGenerativeAI(config.gemini.apiKey);
 
-module.exports = geminiClient;
+const getEmbeddingModel = () =>
+  geminiClient.getGenerativeModel({
+    model: config.gemini.embeddingModel,
+  });
+
+module.exports = { geminiClient, getEmbeddingModel };
