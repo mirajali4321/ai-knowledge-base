@@ -25,7 +25,9 @@ app.use(
 );
 app.use(
   cors({
-    origin: config.app.clientUrl,
+    origin: function (origin, callback) {
+      callback(null, true); // allow all origins
+    },
     credentials: true,
   }),
 );
