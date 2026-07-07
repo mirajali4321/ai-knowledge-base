@@ -3,6 +3,7 @@ const config = {
     port: process.env.PORT || 5000,
     env: process.env.NODE_ENV || "development",
     clientUrl: process.env.CLIENT_URL || "http://localhost:3000",
+    ec2Ip: process.env.EC2_IP || "localhost",
   },
   db: {
     uri: process.env.MONGO_URI,

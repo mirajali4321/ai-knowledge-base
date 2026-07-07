@@ -1,6 +1,11 @@
 const swaggerJsdoc = require("swagger-jsdoc");
 const config = require("./index");
 
+const serverUrl =
+  config.app.env === "production"
+    ? `http://${config.app.ec2Ip}/api/v1`
+    : `http://localhost:${config.app.port}/api/v1`;
+
 const options = {
   definition: {
     openapi: "3.0.0",
@@ -11,8 +16,11 @@ const options = {
     },
     servers: [
       {
-        url: `http://localhost:${config.app.port}/api/v1`,
-        description: "Development server",
+        url: serverUrl,
+        description:
+          config.app.env === "production"
+            ? "Production server"
+            : "Development server",
       },
     ],
     components: {
@@ -24,8 +32,9 @@ const options = {
         },
       },
     },
+    security: [{ bearerAuth: [] }],
   },
-  apis: ["./src/routes/*.js"], // reads JSDoc comments from route files
+  apis: ["./src/routes/*.js"],
 };
 
 const swaggerSpec = swaggerJsdoc(options);
