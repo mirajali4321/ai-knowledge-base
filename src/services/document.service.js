@@ -3,6 +3,7 @@ const s3Service = require("./s3.service");
 const ApiError = require("../utils/ApiError");
 const fileProcessorService = require("./fileProcessor.service");
 const embeddingService = require("./embedding.service");
+const documentQueue = require("../queues/document.queue");
 
 // ── Get presigned upload URL + create document record ─────────────
 const initiateUpload = async ({ filename, mimeType, size, userId }) => {
@@ -120,6 +121,7 @@ const deleteDocument = async ({ documentId, userId }) => {
 };
 
 // ── Process document — extract text and chunk ─────────────────────
+
 const processDocument = async ({ documentId, userId }) => {
   const document = await Document.findOne({
     _id: documentId,
@@ -137,39 +139,18 @@ const processDocument = async ({ documentId, userId }) => {
     );
   }
 
-  try {
-    // update status to show processing started
-    document.status = "processing";
-    await document.save();
+  // add job to queue — returns immediately
+  const job = await documentQueue.add("process-document", {
+    documentId: documentId.toString(),
+    userId: userId.toString(),
+  });
 
-    // run the full pipeline
-    const { chunks, totalChunks } = await fileProcessorService.processFile({
-      s3Key: document.s3Key,
-      mimeType: document.mimeType,
-    });
-    // step 2 — generate embeddings for all chunks
-    const embeddedChunks =
-      await embeddingService.generateChunkEmbeddings(chunks);
-
-    // save chunks to document
-    document.chunks = embeddedChunks;
-    document.chunkCount = totalChunks;
-    document.status = "ready";
-    document.errorMessage = null;
-    await document.save();
-
-    return {
-      documentId: document._id,
-      chunkCount: totalChunks,
-      status: document.status,
-    };
-  } catch (error) {
-    // if anything fails update status to failed
-    document.status = "failed";
-    document.errorMessage = error.message;
-    await document.save();
-    throw new ApiError(500, `Document processing failed: ${error.message}`);
-  }
+  return {
+    jobId: job.id,
+    documentId,
+    status: "processing",
+    message: "Document processing started in background",
+  };
 };
 
 module.exports = {

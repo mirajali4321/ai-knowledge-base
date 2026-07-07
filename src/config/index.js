@@ -32,6 +32,14 @@ const config = {
     numCandidates: 100,
     limit: 5,
   },
+  redis: {
+    url: process.env.REDIS_URL,
+  },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY,
+    embeddingModel: "text-embedding-3-small",
+    chatModel: "gpt-4o-mini",
+  },
 };
 
 const requiredKeys = [
@@ -40,6 +48,8 @@ const requiredKeys = [
   ["jwt.refreshSecret", config.jwt.refreshSecret],
   ["groq.apiKey", config.groq.apiKey],
   ["gemini.apiKey", config.gemini.apiKey],
+  ["redis.url", config.redis.url],
+  ["openai.apiKey", config.openai.apiKey],
 ];
 
 requiredKeys.forEach(([key, value]) => {

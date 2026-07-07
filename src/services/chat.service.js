@@ -1,24 +1,19 @@
-const groqClient = require("../config/grog");
+const openaiClient = require("../config/openai");
 const config = require("../config");
 const vectorSearchService = require("./vectorSearch.service");
 
 const chat = async ({ prompt, systemPrompt }) => {
-  const messages = [
-    {
-      role: "system",
-      content:
-        systemPrompt ||
-        "You are a helpful assistant. Answer clearly and concisely.",
-    },
-    {
-      role: "user",
-      content: prompt,
-    },
-  ];
-
-  const response = await groqClient.chat.completions.create({
-    model: config.groq.model,
-    messages,
+  const response = await openaiClient.chat.completions.create({
+    model: config.openai.chatModel,
+    messages: [
+      {
+        role: "system",
+        content:
+          systemPrompt ||
+          "You are a helpful assistant. Answer clearly and concisely.",
+      },
+      { role: "user", content: prompt },
+    ],
     temperature: 0.2,
     max_tokens: 1024,
   });
@@ -33,9 +28,7 @@ const chat = async ({ prompt, systemPrompt }) => {
   };
 };
 
-// ── RAG query ─────────────────────────────────────────────────────
 const queryDocument = async ({ question, documentId, userId }) => {
-  // step 1 — find relevant chunks via vector search
   const relevantChunks = await vectorSearchService.searchSimilarChunks({
     query: question,
     documentId,
@@ -50,12 +43,11 @@ const queryDocument = async ({ question, documentId, userId }) => {
     };
   }
 
-  // step 2 — build context from retrieved chunks
   const context = relevantChunks
-    .map((chunk, i) => `[${i + 1}] ${chunk.text}`)
+    .slice(0, 3)
+    .map((chunk, i) => `[${i + 1}] ${chunk.text.slice(0, 500)}`)
     .join("\n\n");
 
-  // step 3 — build system prompt with context
   const systemPrompt = `You are a helpful assistant that answers questions based strictly on the provided document context.
 
 Rules:
@@ -67,15 +59,12 @@ Rules:
 Context:
 ${context}`;
 
-  // step 4 — send to Groq for final answer
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: question },
-  ];
-
-  const response = await groqClient.chat.completions.create({
-    model: config.groq.model,
-    messages,
+  const response = await openaiClient.chat.completions.create({
+    model: config.openai.chatModel,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: question },
+    ],
     temperature: 0.2,
     max_tokens: 1024,
   });

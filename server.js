@@ -2,6 +2,8 @@ require("dotenv").config();
 const app = require("./src/app");
 const connectDB = require("./src/config/db");
 const config = require("./src/config");
+require("./src/config/redis");
+require("./src/worker/document.worker"); // start worker
 
 process.on("uncaughtException", (err) => {
   console.error("UNCAUGHT EXCEPTION - shutting down:", err.message);

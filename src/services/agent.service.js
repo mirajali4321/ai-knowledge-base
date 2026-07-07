@@ -1,24 +1,21 @@
-const groqClient = require("../config/grog");
+const openaiClient = require("../config/openai");
 const config = require("../config");
 const vectorSearchService = require("./vectorSearch.service");
 
-// ── Step 1 — Routing decision ─────────────────────────────────────
-const decideRoute = async (question) => {
-  const response = await groqClient.chat.completions.create({
-    model: config.groq.model,
+// ── Step 1 — Generate optimized search query ──────────────────────
+const generateSearchQuery = async (question) => {
+  const response = await openaiClient.chat.completions.create({
+    model: config.openai.chatModel,
     messages: [
       {
         role: "system",
-        content: `You are a routing assistant. Given a user question, decide whether to search a knowledge base or answer directly.
+        content: `You are a search query optimizer for a knowledge base system.
+Your job is to rephrase the user's question into the best possible search query to find relevant information from uploaded documents.
 
-Reply ONLY with valid JSON in one of these two formats:
-{ "tool": "search_knowledge_base", "query": "the search query to use" }
-{ "tool": "answer_directly" }
+Reply ONLY with valid JSON:
+{ "query": "the optimized search query" }
 
-Rules:
-- Use search_knowledge_base for ANY question about specific documents, plans, people, schedules, policies, or domain-specific information
-- Use answer_directly ONLY for pure general knowledge like math, basic science, or common definitions
-- When in doubt, always use search_knowledge_base
+- Make the query concise and keyword focused
 - Reply with JSON only, no explanation, no markdown`,
       },
       {
@@ -33,46 +30,92 @@ Rules:
   const raw = response.choices[0].message.content.trim();
 
   try {
-    // strip markdown code blocks if present
     const cleaned = raw.replace(/```json|```/g, "").trim();
     return JSON.parse(cleaned);
   } catch (err) {
-    // if parsing fails default to search
-    return { tool: "search_knowledge_base", query: question };
+    return { query: question };
   }
 };
 
-// ── Agent — single pass ───────────────────────────────────────────
+// ── Polite not found response ─────────────────────────────────────
+const getNotFoundResponse = async (question) => {
+  const response = await openaiClient.chat.completions.create({
+    model: config.openai.chatModel,
+    messages: [
+      {
+        role: "system",
+        content: `You are a polite and helpful knowledge base assistant. 
+The user asked a question that is not covered in any of their uploaded documents.
+Generate a warm, polite response that:
+- Acknowledges their question
+- Explains gently that this topic is not covered in their uploaded documents
+- Suggests they upload a relevant document if they want answers about this topic
+- Keeps it brief — 2-3 sentences maximum
+- Never sounds robotic or dismissive`,
+      },
+      {
+        role: "user",
+        content: question,
+      },
+    ],
+    temperature: 0.3,
+    max_tokens: 150,
+  });
+
+  return response.choices[0].message.content;
+};
+
+// ── Agent ─────────────────────────────────────────────────────────
 const runAgent = async ({ question, userId }) => {
-  // ── Step 1 — Decide route ─────────────────────────────────────
-  const route = await decideRoute(question);
+  // step 1 — optimize the search query
+  const route = await generateSearchQuery(question);
 
-  // ── Step 2 — Execute decision ─────────────────────────────────
-  let context = null;
-  let toolUsed = route.tool;
+  // step 2 — search knowledge base
+  const chunks = await vectorSearchService.searchAllUserDocuments({
+    query: route.query || question,
+    userId,
+  });
+  console.log("chunks found:", chunks.length);
+  console.log("top score:", chunks[0]?.score);
 
-  if (route.tool === "search_knowledge_base") {
-    const chunks = await vectorSearchService.searchAllUserDocuments({
-      query: route.query || question,
-      userId,
-    });
+  // step 3 — check relevance score
+  // if no chunks or best score below threshold — not relevant
+  const RELEVANCE_THRESHOLD = 0.5;
+  const hasRelevantChunks =
+    chunks.length > 0 && chunks[0].score >= RELEVANCE_THRESHOLD;
 
-    if (chunks.length > 0) {
-      context = chunks.map((c, i) => `[${i + 1}] ${c.text}`).join("\n\n");
-    }
+  if (!hasRelevantChunks) {
+    const politeResponse = await getNotFoundResponse(question);
+    return {
+      answer: politeResponse,
+      toolUsed: "search_knowledge_base",
+      chunksUsed: 0,
+      relevant: false,
+    };
   }
 
-  // ── Step 3 — Generate final answer ────────────────────────────
-  const systemPrompt = context
-    ? `You are a helpful assistant. Answer based strictly on the context below.
-If the answer is not in the context, say "I don't have enough information in your documents to answer that."
+  // step 4 — build context from relevant chunks
+  const context = chunks
+    .slice(0, 3)
+    .map((c, i) => `[${i + 1}] ${c.text.slice(0, 500)}`)
+    .join("\n\n");
+
+  // step 5 — generate final answer
+  const systemPrompt = `You are a helpful and friendly knowledge base assistant.
+Answer the user's question based strictly on the context from their uploaded documents below.
+
+Rules:
+- Only answer from the context provided
+- If the answer is partially in the context, answer what you can and politely mention the limitation
+- If the answer is not in the context at all, generate a warm polite response saying this topic is not covered in their documents
+- Be conversational, friendly and concise
+- Never make up information
 
 Context:
-${context}`
-    : "You are a helpful assistant. Answer clearly and concisely from your general knowledge.";
+${context}`;
 
-  const finalResponse = await groqClient.chat.completions.create({
-    model: config.groq.model,
+  const finalResponse = await openaiClient.chat.completions.create({
+    model: config.openai.chatModel,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: question },
@@ -83,8 +126,9 @@ ${context}`
 
   return {
     answer: finalResponse.choices[0].message.content,
-    toolUsed,
-    chunksUsed: context ? context.split("\n\n").length : 0,
+    toolUsed: "search_knowledge_base",
+    chunksUsed: chunks.length,
+    relevant: true,
   };
 };
 
