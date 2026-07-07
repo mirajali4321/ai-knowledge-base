@@ -15,6 +15,7 @@ const chatRoutes = require("./routes/chat.route");
 const agentRoutes = require("./routes/agent.route");
 
 const app = express();
+app.set("trust proxy", 1);
 
 // ── Security ──────────────────────────────────────────────────────
 app.use(
