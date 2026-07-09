@@ -30,8 +30,8 @@ const config = {
   },
   vectorSearch: {
     indexName: "knowledge_base_index",
-    numCandidates: 100,
-    limit: 5,
+    numCandidates: 150,
+    limit: 8,
   },
   redis: {
     url: process.env.REDIS_URL,

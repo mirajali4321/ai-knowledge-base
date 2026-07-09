@@ -2,6 +2,7 @@ require("dotenv").config();
 const app = require("./src/app");
 const connectDB = require("./src/config/db");
 const config = require("./src/config");
+const { initSocket } = require("./src/config/socket");
 require("./src/config/redis");
 require("./src/worker/document.worker"); // start worker
 
@@ -12,6 +13,7 @@ process.on("uncaughtException", (err) => {
 
 connectDB().then(() => {
   const server = app.listen(config.app.port, () => {
+    initSocket(server);
     console.log(
       `Server running in ${config.app.env} mode on port ${config.app.port}`,
     );

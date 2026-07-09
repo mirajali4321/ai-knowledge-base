@@ -3,20 +3,23 @@ const redisConnection = require("../config/redis");
 const fileProcessorService = require("../services/fileProcessor.service");
 const embeddingService = require("../services/embedding.service");
 const Document = require("../models/document.model");
+const { getIO } = require("../config/socket");
 
 const documentWorker = new Worker(
   "document-processing",
   async (job) => {
     const { documentId, userId } = job.data;
 
-    console.log(`Processing job ${job.id} for document ${documentId}`);
-
     // fetch document from DB
     const document = await Document.findById(documentId);
     if (!document) throw new Error("Document not found");
-
-    // update progress
-    await job.updateProgress(10);
+    //emmit start
+    getIO().to(userId).emit("document:progress", {
+      documentId,
+      status: "processing",
+      percent: 10,
+      message: "Extracting text from document...",
+    });
 
     // step 1 — extract text and chunk
     const { chunks, totalChunks } = await fileProcessorService.processFile({
@@ -24,13 +27,27 @@ const documentWorker = new Worker(
       mimeType: document.mimeType,
     });
 
-    await job.updateProgress(40);
+    // emit chunking done
+    getIO()
+      .to(userId)
+      .emit("document:progress", {
+        documentId,
+        status: "processing",
+        percent: 40,
+        message: `Document split into ${totalChunks} chunks...`,
+      });
 
     // step 2 — generate embeddings
     const embeddedChunks =
       await embeddingService.generateChunkEmbeddings(chunks);
 
-    await job.updateProgress(80);
+    // emit embeddings done
+    getIO().to(userId).emit("document:progress", {
+      documentId,
+      status: "processing",
+      percent: 80,
+      message: "Generating embeddings...",
+    });
 
     // step 3 — save to DB
     document.chunks = embeddedChunks;
@@ -39,9 +56,13 @@ const documentWorker = new Worker(
     document.errorMessage = null;
     await document.save();
 
-    await job.updateProgress(100);
-
-    console.log(`Job ${job.id} completed — ${totalChunks} chunks processed`);
+    // emit complete
+    getIO().to(userId).emit("document:complete", {
+      documentId,
+      status: "ready",
+      percent: 100,
+      message: "Document ready to query!",
+    });
 
     return { documentId, chunkCount: totalChunks };
   },
@@ -51,11 +72,17 @@ const documentWorker = new Worker(
   },
 );
 
-documentWorker.on("completed", (job) => {
-  console.log(`Document ${job.data.documentId} processing completed`);
-});
-
 documentWorker.on("failed", async (job, err) => {
+  // emit failure to user
+  try {
+    getIO().to(job.data.userId).emit("document:failed", {
+      documentId: job.data.documentId,
+      status: "failed",
+      message: err.message,
+    });
+  } catch (e) {
+    console.error("Socket emit failed:", e.message);
+  }
   console.error(
     `Document ${job.data.documentId} processing failed:`,
     err.message,
