@@ -168,9 +168,9 @@ If the user refers to their whole knowledge base collectively (e.g. "all my docu
 
 Otherwise, for each specific document reference you find in the message, match it to the closest document from the list below.
 
-Set documentId to null for a reference if:
-- You are not confident about the match
-- No document in the list resembles it
+Be tolerant of imperfect references — typos, misspellings, missing/extra spaces, underscores vs spaces, missing file extensions, abbreviations, or partial titles all still count as a match to the closest document. Judge by resemblance (shared words, similar spelling, small edit distance), not exact string equality.
+
+Set documentId to null for a reference only if it bears no real resemblance to any document in the list — i.e. it looks like a genuinely different/unrelated name, not just a misspelling of one that's there.
 
 If the user is asking a general question with no document reference at all, set matchAll to false and reply with an empty matches array.
 
@@ -184,7 +184,8 @@ Examples:
 - "what is cloud computing" → { "matchAll": false, "matches": [] }
 - "give me summary of sample_test" → { "matchAll": false, "matches": [one match, documentId of sample_test] }
 - "summarize hmfinal.pdf, learning.pdf and sample_test.pdf" → { "matchAll": false, "matches": [three matches, one per named file, documentId null for any with no close match] }
-- "give me a summary of all my documents" → { "matchAll": true, "matches": [] }`,
+- "give me a summary of all my documents" → { "matchAll": true, "matches": [] }
+- "give me summary of samole test doc" (typo) → { "matchAll": false, "matches": [one match, documentId of the document titled "Sample Test Doc" — treat as a misspelling, not a miss] }`,
       },
       { role: "user", content: question },
     ],
