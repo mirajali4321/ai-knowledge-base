@@ -88,7 +88,7 @@ const processFile = async ({ s3Key, mimeType }) => {
   // step 3 — chunk text
   const chunks = chunkText(text);
 
-  return { chunks, totalChunks: chunks.length };
+  return { chunks, totalChunks: chunks.length, fullText: text };
 };
 
 module.exports = { processFile };

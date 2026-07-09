@@ -60,6 +60,10 @@ const documentSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    summary: {
+      type: String, // whole-document summary, generated once during processing
+      default: null,
+    },
     errorMessage: {
       type: String, // stores error if processing fails
       default: null,

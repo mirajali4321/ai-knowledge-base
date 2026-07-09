@@ -2,6 +2,7 @@ const { Worker } = require("bullmq");
 const redisConnection = require("../config/redis");
 const fileProcessorService = require("../services/fileProcessor.service");
 const embeddingService = require("../services/embedding.service");
+const summaryService = require("../services/summary.service");
 const Document = require("../models/document.model");
 const { getIO } = require("../config/socket");
 
@@ -22,10 +23,11 @@ const documentWorker = new Worker(
     });
 
     // step 1 — extract text and chunk
-    const { chunks, totalChunks } = await fileProcessorService.processFile({
-      s3Key: document.s3Key,
-      mimeType: document.mimeType,
-    });
+    const { chunks, totalChunks, fullText } =
+      await fileProcessorService.processFile({
+        s3Key: document.s3Key,
+        mimeType: document.mimeType,
+      });
 
     // emit chunking done
     getIO()
@@ -37,9 +39,11 @@ const documentWorker = new Worker(
         message: `Document split into ${totalChunks} chunks...`,
       });
 
-    // step 2 — generate embeddings
-    const embeddedChunks =
-      await embeddingService.generateChunkEmbeddings(chunks);
+    // step 2 — generate embeddings and the whole-document summary in parallel
+    const [embeddedChunks, summary] = await Promise.all([
+      embeddingService.generateChunkEmbeddings(chunks),
+      summaryService.generateDocumentSummary(fullText),
+    ]);
 
     // emit embeddings done
     getIO().to(userId).emit("document:progress", {
@@ -52,6 +56,7 @@ const documentWorker = new Worker(
     // step 3 — save to DB
     document.chunks = embeddedChunks;
     document.chunkCount = totalChunks;
+    document.summary = summary;
     document.status = "ready";
     document.errorMessage = null;
     await document.save();

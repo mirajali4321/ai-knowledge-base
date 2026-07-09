@@ -1,6 +1,7 @@
 const openaiClient = require("../config/openai");
 const config = require("../config");
 const vectorSearchService = require("./vectorSearch.service");
+const summaryService = require("./summary.service");
 const Document = require("../models/document.model");
 const mongoose = require("mongoose");
 
@@ -55,7 +56,9 @@ const getChitchatResponse = async (question) => {
       {
         role: "system",
         content: `You are a friendly knowledge base assistant. The user sent a greeting or small talk.
-Reply warmly and briefly, and invite them to ask a question about their uploaded documents.`,
+Reply warmly and naturally like a normal conversation.
+Only mention documents if it naturally fits — don't force it every time.
+Keep it brief — 1-2 sentences max.`,
       },
       { role: "user", content: question },
     ],
@@ -137,7 +140,7 @@ Never answer the actual question.`,
 };
 
 // ── Document Matcher ──────────────────────────────────────────────
-const matchDocument = async (question, userId) => {
+const matchDocuments = async (question, userId) => {
   const documents = await Document.find({
     owner: new mongoose.Types.ObjectId(userId),
     status: "ready",
@@ -145,7 +148,7 @@ const matchDocument = async (question, userId) => {
     .select("_id title originalName")
     .lean();
 
-  if (documents.length === 0) return null;
+  if (documents.length === 0) return { matchAll: false, matches: [] };
 
   const docList = documents
     .map(
@@ -159,39 +162,46 @@ const matchDocument = async (question, userId) => {
     messages: [
       {
         role: "system",
-        content: `You are a document matcher. Match the user's message to the closest document from the list below.
+        content: `You are a document matcher. The user's message may reference one or MULTIPLE documents by name, or ALL of their documents collectively.
 
-Return null if:
-- The user is asking a general question with no document reference
+If the user refers to their whole knowledge base collectively (e.g. "all my documents", "every document", "all of them", "everything I've uploaded") rather than naming specific files, set matchAll to true and leave matches empty.
+
+Otherwise, for each specific document reference you find in the message, match it to the closest document from the list below.
+
+Set documentId to null for a reference if:
 - You are not confident about the match
+- No document in the list resembles it
+
+If the user is asking a general question with no document reference at all, set matchAll to false and reply with an empty matches array.
 
 Available documents:
 ${docList}
 
 Reply ONLY with valid JSON:
-{ "documentId": "the _id of the matching document or null" }
+{ "matchAll": true | false, "matches": [ { "reference": "the name/phrase the user used to refer to it", "documentId": "the _id of the matching document or null" } ] }
 
-Examples of when to return null:
-- "what is cloud computing" → null
-- "what is JWT" → null
-
-Examples of when to return id:
-- "give me summary of sample_test" → match to sample_test
-- "what is hmfinal about" → match to hmfinal
-- "summarize my cloud document" → match to cloud-related document`,
+Examples:
+- "what is cloud computing" → { "matchAll": false, "matches": [] }
+- "give me summary of sample_test" → { "matchAll": false, "matches": [one match, documentId of sample_test] }
+- "summarize hmfinal.pdf, learning.pdf and sample_test.pdf" → { "matchAll": false, "matches": [three matches, one per named file, documentId null for any with no close match] }
+- "give me a summary of all my documents" → { "matchAll": true, "matches": [] }`,
       },
       { role: "user", content: question },
     ],
     temperature: 0,
-    max_tokens: 50,
+    max_tokens: 300,
   });
 
   const raw = response.choices[0].message.content.trim();
   try {
     const cleaned = raw.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleaned).documentId;
+    const parsed = JSON.parse(cleaned);
+    return {
+      matchAll: parsed.matchAll === true,
+      matches: Array.isArray(parsed.matches) ? parsed.matches : [],
+    };
   } catch (err) {
-    return null;
+    return { matchAll: false, matches: [] };
   }
 };
 
@@ -283,38 +293,122 @@ const runAgent = async ({ question, userId }) => {
 
   // ── Document Operation ────────────────────────────────────────
   if (messageType === "document_op") {
-    const specificDocumentId = await matchDocument(question, userId);
+    const { matchAll, matches } = await matchDocuments(question, userId);
 
-    if (!specificDocumentId) {
+    let matched;
+    let unmatched;
+
+    if (matchAll) {
+      const allDocuments = await Document.find({
+        owner: new mongoose.Types.ObjectId(userId),
+        status: "ready",
+      })
+        .select("_id originalName")
+        .lean();
+
+      matched = allDocuments.map((d) => ({
+        reference: d.originalName,
+        documentId: d._id.toString(),
+      }));
+      unmatched = [];
+    } else {
+      matched = matches.filter((m) => m.documentId);
+      unmatched = matches.filter((m) => !m.documentId).map((m) => m.reference);
+    }
+
+    if (matched.length === 0) {
+      let answer;
+      if (matchAll) {
+        answer =
+          "You don't have any documents in your knowledge base yet. Upload a PDF or text file to get started!";
+      } else if (unmatched.length > 0) {
+        answer = `I couldn't find these documents in your knowledge base: ${unmatched.join(", ")}. Could you check the names and try again?`;
+      } else {
+        answer =
+          "I couldn't identify which document you're referring to. Could you mention the document name clearly?";
+      }
+
       return {
-        answer:
-          "I couldn't identify which document you're referring to. Could you mention the document name clearly?",
+        answer,
         toolUsed: "document_op",
         chunksUsed: 0,
         relevant: false,
       };
     }
 
-    const chunks = await vectorSearchService.searchSimilarChunks({
-      query: "introduction overview main topics key points summary",
-      documentId: specificDocumentId,
-      userId,
-    });
+    const uniqueMatched = [
+      ...new Map(matched.map((m) => [m.documentId, m])).values(),
+    ];
 
-    if (chunks.length === 0) {
+    // documents already carry a summary generated once at upload time —
+    // reuse it instead of re-fetching chunks and re-summarizing every call
+    const summaryById = new Map(
+      (
+        await Document.find({
+          _id: { $in: uniqueMatched.map((m) => m.documentId) },
+        })
+          .select("_id summary")
+          .lean()
+      ).map((d) => [d._id.toString(), d.summary]),
+    );
+
+    const docsWithContent = (
+      await Promise.all(
+        uniqueMatched.map(async (m) => {
+          const cachedSummary = summaryById.get(m.documentId);
+          if (cachedSummary) {
+            return {
+              reference: m.reference,
+              content: cachedSummary,
+              chunksUsed: 0,
+            };
+          }
+
+          // fallback for documents processed before summaries were cached —
+          // generate it once now and persist it so future calls hit the cache
+          const chunks = await vectorSearchService.searchSimilarChunks({
+            query: "introduction overview main topics key points summary",
+            documentId: m.documentId,
+            userId,
+          });
+
+          if (chunks.length === 0) return null;
+
+          const combinedText = chunks.map((c) => c.text).join(" ");
+          const generatedSummary =
+            await summaryService.generateDocumentSummary(combinedText);
+
+          await Document.findByIdAndUpdate(m.documentId, {
+            summary: generatedSummary,
+          });
+
+          return {
+            reference: m.reference,
+            content: generatedSummary,
+            chunksUsed: chunks.length,
+          };
+        }),
+      )
+    ).filter(Boolean);
+
+    if (docsWithContent.length === 0) {
       return {
         answer:
-          "I found the document but couldn't extract enough content. Please try again.",
+          "I found the document(s) but couldn't extract enough content. Please try again.",
         toolUsed: "document_op",
         chunksUsed: 0,
         relevant: false,
       };
     }
 
-    const context = chunks
-      .slice(0, 10)
-      .map((c, i) => `[${i + 1}] ${c.text.slice(0, 500)}`)
+    const context = docsWithContent
+      .map((d) => `=== Document: ${d.reference} ===\n${d.content}`)
       .join("\n\n");
+
+    const totalChunks = docsWithContent.reduce(
+      (sum, d) => sum + d.chunksUsed,
+      0,
+    );
 
     const finalResponse = await openaiClient.chat.completions.create({
       model: config.openai.chatModel,
@@ -322,9 +416,14 @@ const runAgent = async ({ question, userId }) => {
         {
           role: "system",
           content: `You are a helpful knowledge base assistant.
-The user wants to perform an action on a specific document.
-Use the document content below to fulfill their request.
-Be thorough, friendly and well structured.
+The user wants to perform an action on one or more specific documents.
+Use the document content below — grouped by document — to fulfill their request.
+If multiple documents are present, address each one separately with a clear heading.
+Be thorough, friendly and well structured.${
+            unmatched.length > 0
+              ? `\nNote: these referenced documents could not be found in the knowledge base: ${unmatched.join(", ")}. Briefly mention this at the end.`
+              : ""
+          }
 
 Document content:
 ${context}`,
@@ -332,13 +431,13 @@ ${context}`,
         { role: "user", content: question },
       ],
       temperature: 0.3,
-      max_tokens: 1024,
+      max_tokens: 2048,
     });
 
     return {
       answer: finalResponse.choices[0].message.content,
       toolUsed: "document_op",
-      chunksUsed: chunks.length,
+      chunksUsed: totalChunks,
       relevant: true,
     };
   }
