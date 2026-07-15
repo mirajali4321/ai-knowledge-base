@@ -6,7 +6,7 @@ const Document = require("../models/document.model");
 const mongoose = require("mongoose");
 
 // ── Intent Classification ─────────────────────────────────────────
-const classifyMessage = async (question) => {
+const classifyMessage = async (question, history = []) => {
   const response = await openaiClient.chat.completions.create({
     model: config.openai.chatModel,
     messages: [
@@ -15,15 +15,18 @@ const classifyMessage = async (question) => {
         content: `Classify the user's message into one of five types:
 - "chitchat": greetings, small talk, thanks
 - "metadata": questions about the knowledge base itself (list files, how many docs)
-- "general": pure general knowledge clearly unrelated to any uploaded documents (history, geography, math, famous people)
+- "general": ONLY for universal trivia with zero conceivable connection to any professional, technical, business, or educational document — capital cities, arithmetic, celebrity facts, sports scores, weather.
 - "document_op": user wants a full action on a SPECIFIC named document (summary, overview, explain a specific file)
-- "question": anything that COULD be answered from uploaded documents — when in doubt use this
+- "question": any question about a concept, definition, process, or topic that COULD plausibly be discussed in a professional/technical/educational document — this is the default whenever there's any doubt
 
-IMPORTANT: Always prefer "question" over "general" unless you are certain the topic cannot be in any document.
+Use the conversation history to resolve references like "this", "it", "that", "explain more" to the correct type based on what was being discussed.
+
+IMPORTANT: "general" is a narrow exception, not the default. A topic-sounding question (e.g. about management, training, processes, systems, concepts, definitions) is "question", not "general", even with no history and even if you don't know what documents exist — the search step will correctly report if it's not covered. Only pick "general" when you're confident no realistic document would ever cover it.
 
 Reply ONLY with valid JSON:
 { "type": "chitchat" | "metadata" | "general" | "document_op" | "question" }`,
       },
+      ...history.slice(-10),
       { role: "user", content: question },
     ],
     temperature: 0,
@@ -49,17 +52,20 @@ Reply ONLY with valid JSON:
 };
 
 // ── Chitchat ──────────────────────────────────────────────────────
-const getChitchatResponse = async (question) => {
+const getChitchatResponse = async (question, history = []) => {
   const response = await openaiClient.chat.completions.create({
     model: config.openai.chatModel,
     messages: [
       {
         role: "system",
         content: `You are a friendly knowledge base assistant. The user sent a greeting or small talk.
-Reply warmly and naturally like a normal conversation.
+Reply warmly and naturally, like a real person texting a friend — not like a customer service bot.
+Use the conversation history to stay consistent — remember names, preferences or anything else the user has told you.
 Only mention documents if it naturally fits — don't force it every time.
+Do NOT end every reply with a generic prompt like "What else would you like to chat about?" or "How can I help you today?" — vary your responses, and it's fine to just make a statement with no question at all.
 Keep it brief — 1-2 sentences max.`,
       },
+      ...history,
       { role: "user", content: question },
     ],
     temperature: 0.5,
@@ -69,7 +75,7 @@ Keep it brief — 1-2 sentences max.`,
 };
 
 // ── Metadata ──────────────────────────────────────────────────────
-const getMetadataResponse = async ({ question, userId }) => {
+const getMetadataResponse = async ({ question, userId, history = [] }) => {
   const documents = await Document.find({
     owner: new mongoose.Types.ObjectId(userId),
     status: "ready",
@@ -103,11 +109,13 @@ ${docList}
 Total documents: ${documents.length}
 
 IMPORTANT RULES:
-- Only state facts you know — filename, upload date, size, type, chunk count
+- If the user just asks what documents they have (or similar), reply with ONLY a simple numbered list of file names — no dates, sizes, types or chunk counts, no extra commentary.
+- Only include upload date, size, type or chunk count if the user specifically asks for those details.
 - Never guess what a document is about based on its filename
 - If asked what a document covers, say you would need to search inside it to know
 - Be friendly and concise`,
       },
+      ...history,
       { role: "user", content: question },
     ],
     temperature: 0.3,
@@ -117,7 +125,7 @@ IMPORTANT RULES:
 };
 
 // ── General Knowledge ─────────────────────────────────────────────
-const getGeneralKnowledgeResponse = async (question) => {
+const getGeneralKnowledgeResponse = async (question, history = []) => {
   const response = await openaiClient.chat.completions.create({
     model: config.openai.chatModel,
     messages: [
@@ -131,6 +139,7 @@ Keep it warm, brief — 2 sentences max.
 Suggest they upload relevant documents if they want answers on this topic.
 Never answer the actual question.`,
       },
+      ...history,
       { role: "user", content: question },
     ],
     temperature: 0.3,
@@ -140,21 +149,23 @@ Never answer the actual question.`,
 };
 
 // ── Document Matcher ──────────────────────────────────────────────
-const matchDocuments = async (question, userId) => {
+const matchDocuments = async (question, userId, history = []) => {
   const documents = await Document.find({
     owner: new mongoose.Types.ObjectId(userId),
     status: "ready",
   })
-    .select("_id title originalName")
+    .select("_id title originalName summary")
     .lean();
 
   if (documents.length === 0) return { matchAll: false, matches: [] };
 
   const docList = documents
-    .map(
-      (d, i) =>
-        `${i + 1}. id:${d._id} | title:${d.title} | file:${d.originalName}`,
-    )
+    .map((d, i) => {
+      const topicHint = d.summary
+        ? ` | about: ${d.summary.slice(0, 200)}`
+        : "";
+      return `${i + 1}. id:${d._id} | title:${d.title} | file:${d.originalName}${topicHint}`;
+    })
     .join("\n");
 
   const response = await openaiClient.chat.completions.create({
@@ -170,7 +181,9 @@ Otherwise, for each specific document reference you find in the message, match i
 
 Be tolerant of imperfect references — typos, misspellings, missing/extra spaces, underscores vs spaces, missing file extensions, abbreviations, or partial titles all still count as a match to the closest document. Judge by resemblance (shared words, similar spelling, small edit distance), not exact string equality.
 
-Set documentId to null for a reference only if it bears no real resemblance to any document in the list — i.e. it looks like a genuinely different/unrelated name, not just a misspelling of one that's there.
+Filenames are often meaningless (e.g. "hmfinal.pdf") and don't resemble what the file is actually about. If a reference doesn't match any title/filename but clearly matches a document's topic (using the "about:" hint), match it by topic instead — e.g. "hospital management doc" should match a document whose "about:" hint discusses hospital management, even though the filename shares no characters with it.
+
+Set documentId to null for a reference only if it bears no real resemblance — by name OR by topic — to any document in the list.
 
 If the user is asking a general question with no document reference at all, set matchAll to false and reply with an empty matches array.
 
@@ -187,6 +200,7 @@ Examples:
 - "give me a summary of all my documents" → { "matchAll": true, "matches": [] }
 - "give me summary of samole test doc" (typo) → { "matchAll": false, "matches": [one match, documentId of the document titled "Sample Test Doc" — treat as a misspelling, not a miss] }`,
       },
+      ...history.slice(-10),
       { role: "user", content: question },
     ],
     temperature: 0,
@@ -207,7 +221,7 @@ Examples:
 };
 
 // ── Search Query Optimizer ────────────────────────────────────────
-const generateSearchQuery = async (question) => {
+const generateSearchQuery = async (question, history = []) => {
   const response = await openaiClient.chat.completions.create({
     model: config.openai.chatModel,
     messages: [
@@ -215,6 +229,7 @@ const generateSearchQuery = async (question) => {
         role: "system",
         content: `You are a search query optimizer for a knowledge base system.
 Rephrase the user's question into the best possible search query to find relevant information.
+Use the conversation history to understand context and resolve references like "this", "it", "that", "the above", "point 1", "explain more".
 
 Reply ONLY with valid JSON:
 { "query": "the optimized search query" }
@@ -222,6 +237,7 @@ Reply ONLY with valid JSON:
 - Make the query concise and keyword focused
 - Reply with JSON only, no explanation, no markdown`,
       },
+      ...history.slice(-10),
       { role: "user", content: question },
     ],
     temperature: 0,
@@ -238,7 +254,7 @@ Reply ONLY with valid JSON:
 };
 
 // ── Not Found Response ────────────────────────────────────────────
-const getNotFoundResponse = async (question) => {
+const getNotFoundResponse = async (question, history = []) => {
   const response = await openaiClient.chat.completions.create({
     model: config.openai.chatModel,
     messages: [
@@ -249,6 +265,7 @@ The user asked a question not covered in their uploaded documents.
 Generate a warm, polite 2-3 sentence response acknowledging their question,
 explaining it's not in their documents, and suggesting they upload a relevant document.`,
       },
+      ...history,
       { role: "user", content: question },
     ],
     temperature: 0.3,
@@ -258,14 +275,14 @@ explaining it's not in their documents, and suggesting they upload a relevant do
 };
 
 // ── Main Agent ────────────────────────────────────────────────────
-const runAgent = async ({ question, userId }) => {
+const runAgent = async ({ question, userId, history = [] }) => {
   // ── Intent Classification ─────────────────────────────────────
-  const messageType = await classifyMessage(question);
+  const messageType = await classifyMessage(question, history);
 
   // ── Chitchat ──────────────────────────────────────────────────
   if (messageType === "chitchat") {
     return {
-      answer: await getChitchatResponse(question),
+      answer: await getChitchatResponse(question, history),
       toolUsed: "chitchat",
       chunksUsed: 0,
       relevant: false,
@@ -275,7 +292,7 @@ const runAgent = async ({ question, userId }) => {
   // ── Metadata ──────────────────────────────────────────────────
   if (messageType === "metadata") {
     return {
-      answer: await getMetadataResponse({ question, userId }),
+      answer: await getMetadataResponse({ question, userId, history }),
       toolUsed: "get_kb_metadata",
       chunksUsed: 0,
       relevant: true,
@@ -285,7 +302,7 @@ const runAgent = async ({ question, userId }) => {
   // ── General Knowledge ─────────────────────────────────────────
   if (messageType === "general") {
     return {
-      answer: await getGeneralKnowledgeResponse(question),
+      answer: await getGeneralKnowledgeResponse(question, history),
       toolUsed: "general_knowledge",
       chunksUsed: 0,
       relevant: false,
@@ -294,7 +311,11 @@ const runAgent = async ({ question, userId }) => {
 
   // ── Document Operation ────────────────────────────────────────
   if (messageType === "document_op") {
-    const { matchAll, matches } = await matchDocuments(question, userId);
+    const { matchAll, matches } = await matchDocuments(
+      question,
+      userId,
+      history,
+    );
 
     let matched;
     let unmatched;
@@ -429,6 +450,7 @@ Be thorough, friendly and well structured.${
 Document content:
 ${context}`,
         },
+        ...history,
         { role: "user", content: question },
       ],
       temperature: 0.3,
@@ -444,7 +466,7 @@ ${context}`,
   }
 
   // ── Semantic Search (question) ────────────────────────────────
-  const route = await generateSearchQuery(question);
+  const route = await generateSearchQuery(question, history);
 
   const chunks = await vectorSearchService.searchAllUserDocuments({
     query: route.query || question,
@@ -460,7 +482,7 @@ ${context}`,
 
   if (!hasRelevantChunks) {
     return {
-      answer: await getNotFoundResponse(question),
+      answer: await getNotFoundResponse(question, history),
       toolUsed: "search_knowledge_base",
       chunksUsed: 0,
       relevant: false,
@@ -468,8 +490,7 @@ ${context}`,
   }
 
   const context = chunks
-    .slice(0, 5)
-    .map((c, i) => `[${i + 1}] ${c.text.slice(0, 500)}`)
+    .map((c, i) => `[${i + 1}] (from ${c.documentName}) ${c.text}`)
     .join("\n\n");
 
   const finalResponse = await openaiClient.chat.completions.create({
@@ -490,6 +511,7 @@ Rules:
 Context:
 ${context}`,
       },
+      ...history,
       { role: "user", content: question },
     ],
     temperature: 0.2,
